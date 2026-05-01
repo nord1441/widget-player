@@ -7,9 +7,9 @@ import android.content.SharedPreferences
  * Thin SharedPreferences wrapper for the only state we persist:
  *  - last opened source URI (m3u or tree)
  *  - current track index + position
- *  - shuffle on/off
+ *  - shuffle on/off + seed for stable ordering
  *  - repeat mode
- *  - shuffle order seed (for stable ordering across restarts)
+ *  - last known display title and playing state (for widget rendering)
  */
 class Prefs private constructor(private val sp: SharedPreferences) {
 
@@ -37,6 +37,34 @@ class Prefs private constructor(private val sp: SharedPreferences) {
         get() = sp.getLong(KEY_SHUFFLE_SEED, 0L)
         set(value) = sp.edit().putLong(KEY_SHUFFLE_SEED, value).apply()
 
+    var lastTitle: String?
+        get() = sp.getString(KEY_LAST_TITLE, null)
+        set(value) = sp.edit().putString(KEY_LAST_TITLE, value).apply()
+
+    var lastArtist: String?
+        get() = sp.getString(KEY_LAST_ARTIST, null)
+        set(value) = sp.edit().putString(KEY_LAST_ARTIST, value).apply()
+
+    var isPlaying: Boolean
+        get() = sp.getBoolean(KEY_IS_PLAYING, false)
+        set(value) = sp.edit().putBoolean(KEY_IS_PLAYING, value).apply()
+
+    fun cycleRepeat(): Int {
+        val next = when (repeatMode) {
+            REPEAT_OFF -> REPEAT_ALL
+            REPEAT_ALL -> REPEAT_ONE
+            else -> REPEAT_OFF
+        }
+        repeatMode = next
+        return next
+    }
+
+    fun toggleShuffle(): Boolean {
+        val next = !shuffleEnabled
+        shuffleEnabled = next
+        return next
+    }
+
     companion object {
         const val REPEAT_OFF = 0
         const val REPEAT_ONE = 1
@@ -49,6 +77,9 @@ class Prefs private constructor(private val sp: SharedPreferences) {
         private const val KEY_SHUFFLE = "shuffle"
         private const val KEY_REPEAT = "repeat"
         private const val KEY_SHUFFLE_SEED = "shuffle_seed"
+        private const val KEY_LAST_TITLE = "last_title"
+        private const val KEY_LAST_ARTIST = "last_artist"
+        private const val KEY_IS_PLAYING = "is_playing"
 
         @Volatile private var instance: Prefs? = null
 

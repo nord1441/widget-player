@@ -4,4 +4,27 @@
     <string name="widget_prev">Previous</string>
     <string name="widget_play_pause">Play / Pause</string>
     <string name="widget_next">Next</string>
+    <string name="widget_no_track">(no track)</string>
+
+    <string name="settings_title">Shuffle Player</string>
+    <string name="settings_source">Source</string>
+    <string name="settings_source_none">(none)</string>
+    <string name="settings_pick_m3u">Choose .m3u file</string>
+    <string name="settings_pick_folder">Choose folder</string>
+    <string name="settings_clear">Clear source</string>
+    <string name="settings_play">Play</string>
+    <string name="settings_pause">Pause</string>
+    <string name="settings_prev">Previous</string>
+    <string name="settings_next">Next</string>
+    <string name="settings_shuffle">Shuffle</string>
+    <string name="settings_repeat">Repeat</string>
+    <string name="settings_repeat_off">Off</string>
+    <string name="settings_repeat_one">One</string>
+    <string name="settings_repeat_all">All</string>
+    <string name="settings_view_errors">View error log</string>
+    <string name="settings_pin_widget">Add widget to home screen</string>
+    <string name="settings_back">Back</string>
+    <string name="errors_title">Error log</string>
+    <string name="errors_empty">No playback errors logged.</string>
+    <string name="errors_clear">Clear log</string>
 </resources>

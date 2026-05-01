@@ -3,33 +3,58 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
-    android:gravity="center"
+    android:gravity="center_vertical"
     android:background="@drawable/widget_bg"
-    android:padding="4dp">
+    android:padding="6dp">
 
-    <ImageButton
-        android:id="@+id/btn_prev"
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <TextView
+            android:id="@+id/txt_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/txt_artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#BBBBBB"
+            android:textSize="12sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/btn_prev"
+        android:layout_width="48dp"
+        android:layout_height="match_parent"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="@string/widget_prev"
         android:src="@drawable/ic_prev" />
 
     <ImageButton
         android:id="@+id/btn_play_pause"
-        android:layout_width="0dp"
+        android:layout_width="48dp"
         android:layout_height="match_parent"
-        android:layout_weight="1"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="@string/widget_play_pause"
         android:src="@drawable/ic_play" />
 
     <ImageButton
         android:id="@+id/btn_next"
-        android:layout_width="0dp"
+        android:layout_width="48dp"
         android:layout_height="match_parent"
-        android:layout_weight="1"
         android:background="?android:attr/selectableItemBackground"
         android:contentDescription="@string/widget_next"
         android:src="@drawable/ic_next" />
