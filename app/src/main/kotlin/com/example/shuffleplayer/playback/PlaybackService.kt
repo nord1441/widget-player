@@ -105,6 +105,7 @@ class PlaybackService : MediaSessionService() {
         val filter = IntentFilter().apply {
             addAction(PlaybackCommands.ACTION_SET_SHUFFLE)
             addAction(PlaybackCommands.ACTION_SET_REPEAT)
+            addAction(PlaybackCommands.ACTION_CLEAR)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(tweakReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -190,7 +191,20 @@ class PlaybackService : MediaSessionService() {
                 Prefs.get(this).repeatMode = mode
                 player.repeatMode = repeatModeForPlayer(mode)
             }
+            PlaybackCommands.ACTION_CLEAR -> handleClear()
         }
+    }
+
+    private fun handleClear() {
+        loadJob?.cancel()
+        player.stop()
+        player.clearMediaItems()
+        loadedSource = null
+        releasePlaceholderForeground()
+        // MediaSessionService may still hold foreground for a moment after stop();
+        // explicitly drop it so the notification disappears immediately.
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

@@ -16,9 +16,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.example.shuffleplayer.data.Prefs
+import com.example.shuffleplayer.playback.PlaybackCommands
 import com.example.shuffleplayer.settings.ErrorLogScreen
 import com.example.shuffleplayer.settings.SettingsScreen
 import com.example.shuffleplayer.widget.PlayerWidgetProvider
+import com.example.shuffleplayer.widget.WidgetUpdater
 
 class MainActivity : ComponentActivity() {
 
@@ -47,10 +49,7 @@ class MainActivity : ComponentActivity() {
                         sourceUri = sourceState,
                         onPickM3u = { openM3u.launch(M3U_MIME_TYPES) },
                         onPickFolder = { openTree.launch(null) },
-                        onClearSource = {
-                            Prefs.get(this).sourceUri = null
-                            sourceState = null
-                        },
+                        onClearSource = ::clearSource,
                         onPinWidget = ::requestPinWidget,
                         onOpenErrorLog = { screen = Screen.ERRORS },
                     )
@@ -69,6 +68,26 @@ class MainActivity : ComponentActivity() {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
         persistAsSource(uri, takeRead = false)
+    }
+
+    private fun clearSource() {
+        val prefs = Prefs.get(this)
+        prefs.sourceUri = null
+        // Also wipe the queue/widget remnants of the previous source so the widget
+        // doesn't keep showing a stale title and the next play doesn't resume from
+        // the old index/position.
+        prefs.currentIndex = 0
+        prefs.positionMs = 0L
+        prefs.lastTitle = null
+        prefs.lastArtist = null
+        prefs.isPlaying = false
+        // Tell the service (if running) to stop and drop its queue. Broadcast is
+        // intentional: we don't want to start the service just to tell it to stop.
+        sendBroadcast(
+            Intent(PlaybackCommands.ACTION_CLEAR).setPackage(packageName),
+        )
+        WidgetUpdater.refreshAll(this)
+        sourceState = null
     }
 
     private fun persistAsSource(uri: Uri, takeRead: Boolean) {
