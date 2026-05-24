@@ -1,11 +1,16 @@
 package com.example.shuffleplayer.playback
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -18,6 +23,7 @@ import androidx.media3.session.MediaSessionService
 import com.example.shuffleplayer.R
 import com.example.shuffleplayer.data.Prefs
 import com.example.shuffleplayer.widget.WidgetUpdater
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,11 +36,17 @@ class PlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private var session: MediaSession? = null
     private lateinit var errorHandler: ErrorHandler
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val coroutineErrorHandler = CoroutineExceptionHandler { _, t ->
+        Log.e(TAG, "Background work failed", t)
+    }
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main + coroutineErrorHandler,
+    )
 
     /** Source URI currently loaded into [player], so we can avoid reloading on every command. */
     private var loadedSource: String? = null
     private var loadJob: Job? = null
+    private var placeholderForegroundActive = false
 
     /**
      * Receives "live tweak" actions (shuffle/repeat changes) without using
@@ -103,8 +115,57 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // We were likely started via startForegroundService(). Android 8+ requires us
+        // to call startForeground() within ~5 seconds or it kills us with
+        // ForegroundServiceDidNotStartInTimeException. The IO load below can easily
+        // exceed that on large trees, so we post a placeholder notification now and
+        // let MediaSessionService replace it once the player actually starts.
+        if (isPlaybackInitiating(intent?.action)) ensurePlaceholderForeground()
         if (intent != null) handleAction(intent)
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun isPlaybackInitiating(action: String?): Boolean = when (action) {
+        PlaybackCommands.ACTION_PLAY_PAUSE,
+        PlaybackCommands.ACTION_NEXT,
+        PlaybackCommands.ACTION_PREV,
+        PlaybackCommands.ACTION_PLAY_FROM_PREFS,
+        PlaybackCommands.ACTION_LOAD_URI -> true
+        else -> false
+    }
+
+    private fun ensurePlaceholderForeground() {
+        if (placeholderForegroundActive) return
+        ensureNotificationChannel()
+        val notification = NotificationCompat.Builder(this, PLACEHOLDER_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.notification_loading))
+            .setOngoing(true)
+            .setSilent(true)
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                MEDIA_NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+            )
+        } else {
+            startForeground(MEDIA_NOTIFICATION_ID, notification)
+        }
+        placeholderForegroundActive = true
+    }
+
+    private fun ensureNotificationChannel() {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (nm.getNotificationChannel(PLACEHOLDER_CHANNEL_ID) != null) return
+        nm.createNotificationChannel(
+            NotificationChannel(
+                PLACEHOLDER_CHANNEL_ID,
+                getString(R.string.notification_channel_playback),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply { setShowBadge(false) },
+        )
     }
 
     private fun handleAction(intent: Intent) {
@@ -190,9 +251,17 @@ class PlaybackService : MediaSessionService() {
     private fun loadAndPlay(uri: Uri) {
         loadJob?.cancel()
         loadJob = scope.launch {
-            val tracks = withContext(Dispatchers.IO) { SourceLoader.load(applicationContext, uri) }
+            val tracks = runCatching {
+                withContext(Dispatchers.IO) { SourceLoader.load(applicationContext, uri) }
+            }.onFailure { Log.e(TAG, "Failed to load source $uri", it) }.getOrDefault(emptyList())
+
             val ordered = applyShuffleIfEnabled(tracks)
-            if (ordered.isEmpty()) return@launch
+            if (ordered.isEmpty()) {
+                // Nothing to play — drop the placeholder so the user isn't left with
+                // a stuck "Loading…" notification.
+                releasePlaceholderForeground()
+                return@launch
+            }
             val prefs = Prefs.get(applicationContext)
             val startIndex = prefs.currentIndex.coerceIn(0, ordered.size - 1)
             val items = ordered.map { it.toMediaItem() }
@@ -201,6 +270,12 @@ class PlaybackService : MediaSessionService() {
             player.play()
             loadedSource = uri.toString()
         }
+    }
+
+    private fun releasePlaceholderForeground() {
+        if (!placeholderForegroundActive) return
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        placeholderForegroundActive = false
     }
 
     private fun rebuildQueueWithCurrentSettings() {
@@ -259,5 +334,15 @@ class PlaybackService : MediaSessionService() {
             .setMediaId(uri.toString())
             .setMediaMetadata(metadata)
             .build()
+    }
+
+    companion object {
+        private const val TAG = "PlaybackService"
+
+        // Matches DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID so that
+        // MediaSessionService's eventual startForeground() replaces our placeholder
+        // rather than stacking a second foreground notification.
+        private const val MEDIA_NOTIFICATION_ID = 1001
+        private const val PLACEHOLDER_CHANNEL_ID = "playback_placeholder"
     }
 }

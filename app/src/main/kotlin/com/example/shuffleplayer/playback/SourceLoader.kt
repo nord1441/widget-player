@@ -1,7 +1,10 @@
 package com.example.shuffleplayer.playback
 
+import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 
 /**
@@ -9,6 +12,8 @@ import androidx.documentfile.provider.DocumentFile
  * into a list of [ResolvedTrack] ready to feed into the player.
  */
 object SourceLoader {
+
+    private const val TAG = "SourceLoader"
 
     private val AUDIO_EXTENSIONS = setOf(
         "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "wav", "wma",
@@ -59,27 +64,70 @@ object SourceLoader {
         }
     }
 
+    /**
+     * Iterative BFS using [DocumentsContract] directly (one query per folder vs the
+     * N+1 pattern of [DocumentFile.listFiles] + per-child [DocumentFile.isDirectory]).
+     * Per-folder failures are logged and skipped so a single inaccessible subtree
+     * does not abort the whole scan.
+     */
     private fun loadFolder(context: Context, treeUri: Uri): List<ResolvedTrack> {
-        val root = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList()
+        val resolver = context.contentResolver
+        val rootId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }
+            .getOrNull() ?: return emptyList()
+
         val out = mutableListOf<ResolvedTrack>()
-        walk(root) { file ->
-            val ext = file.name?.substringAfterLast('.', "")?.lowercase().orEmpty()
-            if (ext in AUDIO_EXTENSIONS || ext in VIDEO_EXTENSIONS) {
-                out += ResolvedTrack(
-                    uri = file.uri,
-                    displayTitle = file.name?.substringBeforeLast('.'),
-                    artist = null,
-                    durationSec = null,
-                )
-            }
+        val queue = ArrayDeque<String>().apply { addLast(rootId) }
+        val visited = HashSet<String>()
+
+        while (queue.isNotEmpty()) {
+            val parentId = queue.removeFirst()
+            if (!visited.add(parentId)) continue
+            scanChildren(resolver, treeUri, parentId, queue, out)
         }
         return out.sortedBy { it.displayTitle?.lowercase() ?: it.uri.toString() }
     }
 
-    private fun walk(dir: DocumentFile, onFile: (DocumentFile) -> Unit) {
-        dir.listFiles().forEach { child ->
-            if (child.isDirectory) walk(child, onFile) else onFile(child)
+    private fun scanChildren(
+        resolver: ContentResolver,
+        treeUri: Uri,
+        parentId: String,
+        queue: ArrayDeque<String>,
+        out: MutableList<ResolvedTrack>,
+    ) {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        try {
+            resolver.query(childrenUri, projection, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getString(0) ?: continue
+                    val name = c.getString(1)
+                    val mime = c.getString(2)
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        queue.addLast(id)
+                    } else if (name != null && isMediaFile(name)) {
+                        out += ResolvedTrack(
+                            uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id),
+                            displayTitle = name.substringBeforeLast('.', name),
+                            artist = null,
+                            durationSec = null,
+                        )
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            // Misbehaving providers, revoked permissions on a subtree, etc.
+            // Skip this folder and keep walking the rest.
+            Log.w(TAG, "Failed to list children of $parentId in $treeUri", t)
         }
+    }
+
+    private fun isMediaFile(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext.isNotEmpty() && (ext in AUDIO_EXTENSIONS || ext in VIDEO_EXTENSIONS)
     }
 
     private fun isTreeUri(uri: Uri): Boolean {
