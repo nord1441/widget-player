@@ -86,21 +86,25 @@
 
 ### ウィジェットからのコールドスタート(最重要経路)
 
+Media3公式の「再生再開(playback resumption)」パターンを使う。自前のフォアグラウンド管理を持たず、5秒ルール対応をMedia3に委譲する(前回はここを自前管理してタイムアウトクラッシュした)。
+
 ```
-ウィジェットボタン → PendingIntent.getForegroundService(明示Intent + コマンドextra)
-  → PlaybackService.onStartCommand
-      1. 即 startForeground(プレースホルダ通知)  ← 5秒ルールを無条件で満たす
-      2. PlaylistCacheを読み即プレイリスト構築 → 保存済みindex/positionから再生
-      3. フォルダソースの場合のみ裏で再走査 → 差分があればプレイリスト差し替え
+ウィジェットボタン → PendingIntent.getBroadcast(ACTION_MEDIA_BUTTON + KeyEvent)
+  → androidx.media3.session.MediaButtonReceiver(サービス起動とフォアグラウンド化はMedia3が管理)
+  → セッションが空なら MediaSession.Callback.onPlaybackResumption が呼ばれる
+      1. PlaylistCacheを読み即プレイリスト構築 → 保存済みindex/positionから再開
+      2. フォルダソースの場合のみ裏で再走査 → 差分があればプレイリスト差し替え
          (再生中トラックは維持、消えていたら次へ)
   キャッシュ不在(初回)のみ走査完了を待ってから再生
 ```
 
+この経路はBluetoothヘッドセットからの再生再開でも同一コードが使われる(一石二鳥)。
+
 ### コマンド経路
 
-- ウィジェット → `getForegroundService`明示Intent: PLAY_PAUSE / NEXT / PREV(MediaControllerバインドはしない)
+- ウィジェット → `MediaButtonReceiver`へのKeyEventブロードキャスト: PLAY_PAUSE / NEXT / PREV(MediaControllerバインドはしない)
 - 通知・ロック画面・Bluetooth → Media3 MediaSessionが自動処理
-- 設定画面 → MediaController(画面表示中のみbind)
+- 設定画面 → MediaController(画面表示中のみbind)。ソース設定・shuffle/repeat変更はカスタムSessionCommandで送る
 
 ### ExoPlayer設定(再生堅牢化)
 
@@ -158,11 +162,22 @@ tree URI・m3u URIは`takePersistableUriPermission`で永続化する。
 
 **ACTION_VIEW受領:** m3u(各種MIME)/ audio/* / video/* / http(s)を受領 → ソースとして保存 → サービス起動して即再生 → 設定画面表示。
 
+## m3u内パスエントリの解決と権限(元設計の重大な穴の修正)
+
+SAFで選んだm3uは**単一ドキュメント許可**しか持たないため、m3u内の相対パス・絶対パスが指す兄弟ファイルはSAFだけでは読めない。元設計の「READ_MEDIA_*不要」はm3u主用途と両立しない。対策:
+
+- **絶対パス**(`/storage/...`)→ `file://` URIとして再生。`READ_MEDIA_AUDIO/VIDEO`(API 33+)または`READ_EXTERNAL_STORAGE`(26-32)が必要
+- **相対パス** → m3uのdocId(例 `primary:Music/list.m3u`)から親ディレクトリを取り、純Kotlinの`joinRelative`で結合:
+  - プロバイダが`com.android.externalstorage.documents`かつroot=`primary`なら `/storage/emulated/0/<path>` の`file://`に解決(要・上記権限)
+  - それ以外は同一プロバイダの兄弟docId `content://` URIを構築して試行(アクセス不可ならエラー→スキップで自然に処理)
+- 権限はm3uソースにパスエントリが含まれる場合のみ設定画面から要求する(フォルダ/ストリーミング用途では要求しない)
+- 解決できない・読めないトラックは失敗即スキップ+エラーログという既定動作に乗せる
+
 ## マニフェスト要点
 
-- 権限: FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK, INTERNET, WAKE_LOCK, POST_NOTIFICATIONS
+- 権限: FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK, INTERNET, WAKE_LOCK, POST_NOTIFICATIONS, READ_MEDIA_AUDIO / READ_MEDIA_VIDEO(33+)/ READ_EXTERNAL_STORAGE(maxSdkVersion=32)
 - `PlaybackService`: `foregroundServiceType="mediaPlayback"`, MediaSessionServiceインテントフィルタ
-- READ_MEDIA_*系は持たない(ファイルアクセスはSAFと受領URIのみ)
+- `androidx.media3.session.MediaButtonReceiver`をMEDIA_BUTTONインテントフィルタ付きで宣言
 
 ## テスト戦略
 
