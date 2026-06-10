@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Shuffle Player</string>
+    <string name="no_source">ソース未設定</string>
+    <string name="playback_unavailable">再生不可: 接続を確認</string>
+    <string name="notification_channel_name">再生</string>
+</resources>
